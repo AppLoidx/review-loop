@@ -14,11 +14,12 @@ misses. Findings are merged and de-duplicated, then Codex writes the fixes. Defa
 - **Isolated** — runs in its own git worktree, so it never touches your working copy and several
   agents can work the same repo at once. Fixes land on a dedicated `review-loop/<branch>-<sha>`
   branch.
-- **Honest termination** — stops when a round surfaces no *genuinely new* finding (not just when
-  the count drops), so it won't thrash on the same non-issue. Only blocker/should bugs within the
-  change's intent trigger fixes; nits are declined with reasons and reported as follow-ups.
-- **Scope discipline** favors deleting or narrowing code, checks diff growth after fixes, and
-  reports shortstat before/after. Persistent disputes go to the user with both sides.
+- **Honest termination** — zero actionable findings and no open actionable ids can reach `CLEAN`
+  after the backstop and checks; nits remain follow-ups. `NO-PROGRESS` means open actionable ids
+  with nothing new actionable, or a dispute handoff. Only blocker/should findings trigger fixes.
+- **Scope discipline** favors deleting or narrowing code, checks every added hunk including new
+  files, and reports shortstat before/after. The first actionable re-raise after a written decline
+  goes to the user with both sides; unrelated new findings are fixed first if budget allows.
 - **Self-improving** — keeps a small `knowledge-base.md` of your recurring corrections and feeds
   them into future reviews. Ships empty; fills up from your own runs.
 - **Straight answers** — reports `CLEAN` / `NO-PROGRESS` / `CAP` / `VERIFY-FAILED`, and flags
@@ -111,7 +112,8 @@ Full behavior, preconditions, and edge cases live in [`SKILL.md`](./SKILL.md).
 - The `CLEAN` gate runs typecheck/lint, **not** your full test suite — CI stays the final safety net.
 - The default cap is 4 rounds; exactly one extra is allowed for an evidenced open blocker/should
   concerning security, permissions/auth, data loss, or state/concurrency, or at the user's request.
-  Nit-only rounds stop early. Budget exhaustion leaves open findings open; it is not approval.
+  Nit-only rounds need no fix round and can reach `CLEAN` after the backstop and checks when no
+  actionable ids remain open. Budget exhaustion leaves open findings open; it is not approval.
 - De-dup is theme/string based, so two findings worded very differently may not collapse.
 
 ## License

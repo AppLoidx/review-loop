@@ -27,6 +27,8 @@ read-only review: do not edit or commit any files.
   nit = everything else; only blocker/should are actionable.
 - Another path, a rare case, small perf cost, extra compatibility, or tests/guards
   the intent does not need = nit. Flag unneeded code rather than expanding it.
+- A regression this change introduces affecting security, auth/permissions, or data loss
+  is never downgraded to nit for another path or rarity.
 - Read declined ids/reasons before reporting; a re-raised id must address the written reason.
 - If there are no findings, output exactly the single line: NO FINDINGS
 - No prose, no diffs, no explanations outside the finding blocks.

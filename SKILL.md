@@ -20,7 +20,7 @@ pass. They run **concurrently** (Codex in a background Bash while the subagent r
 **deduped** before any fix. The point of the loop: each reviewer finds bugs the other (and the
 fixer) missed → dedup → fix → re-review until nothing new. Default budget: 4 rounds (Step C).
 Fix real bugs in the intended case; decline the rest with reasons. Keep the diff at the size the
-user's goal needs, and hand persistent disputes to the user.
+user's goal needs, and hand disputes to the user after the first actionable re-raise.
 
 The whole loop runs in its **own git worktree** off the target branch's committed tip — it never
 touches the user's checkout, so several agents can work the same repo without colliding. Fix commits
@@ -28,8 +28,9 @@ land on a dedicated `review-loop/<branch>-<sha>` branch; the user merges from th
 never opens a PR.
 
 Termination is **identity-based**, not count-based: a round makes progress only if it surfaces a
-*new* actionable finding. The loop stops when a round adds nothing new (NO-PROGRESS), the tree is
-clean (CLEAN, after a final typecheck), or the cap is hit (CAP).
+*new* actionable finding. No actionable findings this round and no open actionable ids leads to
+CLEAN after the conditional backstop and Final verify; nits remain follow-ups. Open actionable ids
+with nothing new actionable means NO-PROGRESS. Budget exhaustion means CAP; disputes go to the user.
 
 ## Preconditions (fail fast, in order)
 
@@ -64,6 +65,9 @@ label it "unverified", do not assert it.
 Severity: `blocker` = the intended case is wrong; `should` = a real bug callers will hit, within
 this change's intent; `nit` = everything else. Only blocker/should are actionable. Another path,
 a rare case, small perf cost, extra compatibility, or tests/guards the intent does not need = nit.
+Exception: a regression this change introduces affecting security, auth/permissions, or data loss
+is never downgraded to nit for another path or rarity. Read declined ids/reasons before reporting;
+a re-raised id must address the written reason.
 
 ### Reviewer B — Codex read-only
 
@@ -84,7 +88,7 @@ isn't worth it — a direct `Edit` is fine). Otherwise Codex authors them:
    (clean tree between).
 3. **Verify before commit**: the diff is non-empty and addresses each finding; run the repo
    typecheck/lint on it (empty diff or new errors → re-run Codex once with the failure appended;
-   still failing → fix that batch inline). Apply the Step D growth guard before committing.
+   still failing → fix that batch inline). Apply the Step D hunk check before committing.
    Then `git -C "$REPO_ROOT" commit` on `LOOP_BRANCH`.
 
 ## Round Loop
@@ -108,8 +112,9 @@ Before round 1, record intent/out-of-scope in 1-2 sentences and the baseline sho
   - **No fix applied all loop** → **skip** (nothing to regress) → Final verify.
   - **Any fix applied** → ONE **Codex-only** read-only review scoped to the **union of fix-touched
     files** at `BASE..HEAD`. Codex alone — the reliable reviewer; the subagent backstop only added
-    false-positive noise. Classify through Step B, then Step C; only actionable findings continue
-    within budget.
+    false-positive noise. Merge backstop findings into this round's findings, then reclassify in
+    Step B using the pre-round SEEN set. Mark the backstop done for this HEAD before re-checking
+    Step C; never repeat it on the same HEAD. A fix changes HEAD and requires a fresh backstop.
 
 Substitute the round's range as `<RANGE>` and `git -C "$REPO_ROOT" diff --name-only <RANGE>` as
 `<changed_files>` in both reviewers' inputs. Include the intent/out-of-scope brief and, in later
@@ -145,16 +150,22 @@ first ~6 significant words; ignore line-number drift).
 
 - Re-grade EVERY finding yourself using the Reviewer-A severity rubric, whatever label it came
   with: blocker/should only are **actionable**; everything else is a **declined nit**. Another path,
-  rare case, small perf cost, extra compatibility, or unneeded tests/guards = nit.
+  rare case, small perf cost, extra compatibility, or unneeded tests/guards = nit, subject to the
+  rubric's security/auth/permissions/data-loss regression exception.
 - False positive disproved with a file:line / command-output citation = **refuted**; cite it.
   Record every declined nit/out-of-scope finding with a one-line reason and list it as a follow-up.
 - `SEEN` = keys from ALL prior rounds (actionable, refuted AND declined). Use these keys as ids.
   `NEW_R` = actionable findings whose
   key ∉ `SEEN`. Add every key this round to `SEEN`. `T_R` = actionable count this round (report).
 - Same key from both reviewers → collapse to one, fix once.
-- Track unresolved actionable ids across rounds; absence from an incremental review is not resolution.
-- A reviewer re-raises an id after your written decline/refutation (two exchanges): stop arguing.
-  Report **NO-PROGRESS** with both sides under **Disputed**; the user decides. Never agree just to end.
+- An actionable id is **resolved** when its fix commit passed Fixer step-3 verify and the next
+  review of that range does not re-raise it. Until that review, mark it **fixed, pending review**.
+  **Open** = actionable and not fixed (including failed fixes, CAP residuals, and disputed ids).
+  A re-raised fixed id is open again; do not re-fix repeats automatically.
+- The FIRST re-raise after a written decline/refutation goes under **Disputed** for the user;
+  a re-raise the reviewer labels nit is agreement, not a dispute. Keep disputed ids open and
+  separate from other NEW_R findings. Fix those other findings first if budget allows, then stop
+  with both sides reported; otherwise list them as open too. Never agree just to end the loop.
 
 ### Step C — terminate-check (first match wins)
 
@@ -164,21 +175,22 @@ asks. Record the reason and evidence; never extend again. Budget exhaustion is n
 
 | Condition | Action |
 |---|---|
-| persistent dispute after a written decline/refutation | exit **NO-PROGRESS**, report **Disputed** for the user |
-| this round returns only nits | exit **NO-PROGRESS** early; report follow-ups and any open items; no fix round |
-| findings_A == 0 AND findings_B == 0 on this round's range | run the **conditional backstop** (Codex-only over fix-touched files; skipped if no fix was ever applied); still zero and no open actionable ids → **Final verify** → exit **CLEAN**; open ids → **NO-PROGRESS**. Backstop surfaces findings → Step B, then re-check termination within budget |
-| `R > 1` and `NEW_R == 0` (only repeats/refuted/declined remain) | exit **NO-PROGRESS** — fixes aren't resolving them or reviewers re-raise the same items; do NOT fix more |
-| `R == LIMIT` and `NEW_R > 0` | exit **CAP** — report all open residuals, do NOT fix (it would be unreviewed) |
-| else | go to Step D |
+| disputed ids remain | if `NEW_R > 0` and `R < LIMIT`, Step D fixes only the other new actionable ids, then stop **NO-PROGRESS** for the user; otherwise stop and list all open items |
+| `T_R == 0` AND no open actionable ids | run the conditional backstop if fixes were applied and it is not done for this HEAD; merge its findings into this round and re-check via Step B/C once. With zero actionable findings and no open ids after backstop (or skip), **Final verify**, then **CLEAN**; nits stay follow-ups |
+| open actionable ids remain AND `NEW_R == 0` | exit **NO-PROGRESS**; do NOT fix repeats |
+| `R == LIMIT` AND `NEW_R > 0` | exit **CAP**; report all open residuals, do NOT fix (it would be unreviewed) |
+| `NEW_R > 0` AND `R < LIMIT` | go to Step D |
 
 ### Step D — fix the new findings
 
 Run the **Fixer** (above) on `NEW_R` (actionable, deduped, batched by file): `codex exec -s
-workspace-write -C "$REPO_ROOT"`, verify, commit on `LOOP_BRANCH`. Then next round.
+workspace-write -C "$REPO_ROOT"`, verify, commit on `LOOP_BRANCH`. Then next round, unless Step C
+requires a dispute handoff; report those fixes as pending review when stopping.
 
-Before committing, compare the proposed `BASE`-to-working-tree shortstat with the prior recorded
-`BASE..HEAD` shortstat. If the round grew the diff, check each added hunk against a finding; revert
-hunks touching code no finding named (scope creep), then verify the retained fixes before commit.
+Before committing on EVERY fix round, include new files with `git -C "$REPO_ROOT" add -N .`.
+Measure `git -C "$REPO_ROOT" diff --shortstat BASE` (saved SHA) and inspect every added hunk in
+`git -C "$REPO_ROOT" diff HEAD`, regardless of net growth. Revert hunks touching code no finding
+named (scope creep), then verify retained fixes before commit. Shortstat deltas are report-only.
 After each fix round, record `git -C "$REPO_ROOT" diff --shortstat BASE..HEAD` again (saved SHA).
 
 ### Final verify (gates CLEAN only)
@@ -215,8 +227,8 @@ If `knowledge-base.md` is absent, skip all KB steps (the loop still runs).
 5. **Outcome** — CLEAN / NO-PROGRESS / CAP / VERIFY-FAILED + remaining unfixed findings; rounds
    used and the extra-round reason/evidence, if any. Open items stay open at the budget.
    **Follow-ups** — every declined id and its one-line reason.
-   **Disputed** — for each persistent dispute, both sides in 2-3 lines each, with evidence;
-   the user decides.
+   **Disputed** — for each first actionable re-raise after a written decline/refutation, both
+   sides in 2-3 lines each, with evidence; the user decides.
 6. **Reviewer health** — Codex hard-failed ≥2 rounds → label outcome **SINGLE-REVIEWER (Codex
    unavailable)**; a CLEAN reached with one reviewer is NOT the full double review.
 7. **Verification caveat** — Final-verify result (or "not configured"); full test suite NOT run. Not
@@ -224,12 +236,13 @@ If `knowledge-base.md` is absent, skip all KB steps (the loop still runs).
 
 ## Edge Cases
 
-- Round-1 zero findings: Final verify, exit CLEAN, still report.
+- Round-1 zero actionable findings and no open ids: Final verify, exit CLEAN, still report follow-ups.
 - Codex emits malformed/no parsable findings: findings_B = 0, note; optionally re-prompt once.
 - `codex exec` hard failure: findings_B = 0, note, bump the counter, CONTINUE. Fails every round →
   one reviewer → SINGLE-REVIEWER outcome.
 - `codex-review-prompt.md` missing from this skill dir: stop — it ships with the skill; restore it.
-- A round's findings all refuted: `NEW_R == 0` → NO-PROGRESS (no fix). Cite each refutation.
+- Only refuted and/or nit findings: Step C's zero-actionable path; no empty fix round. Cite
+  refutations and list declined nits as follow-ups; open actionable ids still prevent CLEAN.
 - Fixer produces an empty diff for a batch: treat as a failure — re-run Codex once, else fix inline.
 
 ## Red Flags — STOP
@@ -245,12 +258,12 @@ If `knowledge-base.md` is absent, skip all KB steps (the loop still runs).
   cohort. Reviewer A is a full-model `general-purpose` subagent.
 - Only ran one reviewer this round when both were available → a round needs BOTH reviewers.
 - Loop with no round counter / no cap → default 4, at most 5 under Step C.
-- Terminating on raw count instead of NEW findings → NO-PROGRESS is "no new actionable finding," not
-  "count didn't drop" (a round that fixes 3 and surfaces 3 new regressions IS progress).
+- Terminating on raw counts: NO-PROGRESS needs open actionable ids and no new actionable findings
+  (or a dispute handoff); zero actionable findings with no open ids takes the CLEAN path.
 - Applying a fix at the active cap → no, it would be unreviewed.
-- Claiming CLEAN with actionable findings remaining, or before Final verify passes → only an all-zero round that
-  then passes typecheck is CLEAN.
+- Claiming CLEAN with open actionable ids or fixes pending review: require zero actionable findings,
+  confirmed resolution, the conditional backstop, and passing Final verify.
 - Reporting CLEAN as a full double review when Codex failed every round → label it SINGLE-REVIEWER.
 - Fixing nits or accepting a reviewer label without re-grading: decline with a reason (Step B).
-- Diff growth without checking each added hunk against a finding: cut scope creep before continuing.
-- Agreeing to end an argument: report the persistent dispute; the user decides.
+- Skipping a hunk check because the diff shrank: check EVERY added hunk, including new files.
+- Agreeing to end an argument: report the first actionable re-raise after a written decline; the user decides.
