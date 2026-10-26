@@ -8,13 +8,18 @@ you a branch to merge. It **never pushes and never opens a PR**; you do the merg
 
 Two reviewers from **different models** — a Claude subagent and **Codex (gpt-5.5)** — read the diff
 **independently and in parallel**. Because they're different models, each catches what the other
-misses. Findings are merged and de-duplicated, then Codex writes the fixes. Repeat up to 4 rounds.
+misses. Findings are merged and de-duplicated, then Codex writes the fixes. Default: up to 4 rounds
+(one extra under the risk rule below).
 
 - **Isolated** — runs in its own git worktree, so it never touches your working copy and several
   agents can work the same repo at once. Fixes land on a dedicated `review-loop/<branch>-<sha>`
   branch.
-- **Honest termination** — stops when a round surfaces no *genuinely new* finding (not just when
-  the count drops), so it won't thrash on the same non-issue. Bounded at 4 rounds.
+- **Honest termination** — zero actionable findings and no open actionable ids can reach `CLEAN`
+  after the backstop and checks; nits remain follow-ups. `NO-PROGRESS` means open actionable ids
+  with nothing new actionable, or a dispute handoff. Only blocker/should findings trigger fixes.
+- **Scope discipline** favors deleting or narrowing code, checks every added hunk including new
+  files, and reports shortstat before/after. The first actionable re-raise after a written decline
+  goes to the user with both sides; unrelated new findings are fixed first if budget allows.
 - **Self-improving** — keeps a small `knowledge-base.md` of your recurring corrections and feeds
   them into future reviews. Ships empty; fills up from your own runs.
 - **Straight answers** — reports `CLEAN` / `NO-PROGRESS` / `CAP` / `VERIFY-FAILED`, and flags
@@ -105,7 +110,10 @@ Full behavior, preconditions, and edge cases live in [`SKILL.md`](./SKILL.md).
 
 - Only Codex writes the fixes — there's no cross-model check on the fix itself yet.
 - The `CLEAN` gate runs typecheck/lint, **not** your full test suite — CI stays the final safety net.
-- The 4-round cap is fixed; very large diffs may need a second pass.
+- The default cap is 4 rounds; exactly one extra is allowed for an evidenced open blocker/should
+  concerning security, permissions/auth, data loss, or state/concurrency, or at the user's request.
+  Nit-only rounds need no fix round and can reach `CLEAN` after the backstop and checks when no
+  actionable ids remain open. Budget exhaustion leaves open findings open; it is not approval.
 - De-dup is theme/string based, so two findings worded very differently may not collapse.
 
 ## License
