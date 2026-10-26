@@ -8,13 +8,17 @@ you a branch to merge. It **never pushes and never opens a PR**; you do the merg
 
 Two reviewers from **different models** — a Claude subagent and **Codex (gpt-5.5)** — read the diff
 **independently and in parallel**. Because they're different models, each catches what the other
-misses. Findings are merged and de-duplicated, then Codex writes the fixes. Repeat up to 4 rounds.
+misses. Findings are merged and de-duplicated, then Codex writes the fixes. Default: up to 4 rounds
+(one extra under the risk rule below).
 
 - **Isolated** — runs in its own git worktree, so it never touches your working copy and several
   agents can work the same repo at once. Fixes land on a dedicated `review-loop/<branch>-<sha>`
   branch.
 - **Honest termination** — stops when a round surfaces no *genuinely new* finding (not just when
-  the count drops), so it won't thrash on the same non-issue. Bounded at 4 rounds.
+  the count drops), so it won't thrash on the same non-issue. Only blocker/should bugs within the
+  change's intent trigger fixes; nits are declined with reasons and reported as follow-ups.
+- **Scope discipline** favors deleting or narrowing code, checks diff growth after fixes, and
+  reports shortstat before/after. Persistent disputes go to the user with both sides.
 - **Self-improving** — keeps a small `knowledge-base.md` of your recurring corrections and feeds
   them into future reviews. Ships empty; fills up from your own runs.
 - **Straight answers** — reports `CLEAN` / `NO-PROGRESS` / `CAP` / `VERIFY-FAILED`, and flags
@@ -105,7 +109,9 @@ Full behavior, preconditions, and edge cases live in [`SKILL.md`](./SKILL.md).
 
 - Only Codex writes the fixes — there's no cross-model check on the fix itself yet.
 - The `CLEAN` gate runs typecheck/lint, **not** your full test suite — CI stays the final safety net.
-- The 4-round cap is fixed; very large diffs may need a second pass.
+- The default cap is 4 rounds; exactly one extra is allowed for an evidenced open blocker/should
+  concerning security, permissions/auth, data loss, or state/concurrency, or at the user's request.
+  Nit-only rounds stop early. Budget exhaustion leaves open findings open; it is not approval.
 - De-dup is theme/string based, so two findings worded very differently may not collapse.
 
 ## License
