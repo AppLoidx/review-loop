@@ -161,7 +161,8 @@ first ~6 significant words; ignore line-number drift).
 - An actionable id is **resolved** when its fix commit passed Fixer step-3 verify and the next
   review of that range does not re-raise it. Until that review, mark it **fixed, pending review**.
   **Open** = actionable and not fixed (including failed fixes, CAP residuals, and disputed ids).
-  A re-raised fixed id is open again; do not re-fix repeats automatically.
+  A fixed id re-raised as actionable (after your re-grade) is open again; do not re-fix repeats
+  automatically. A nit re-raise of a fixed id resolves it and goes to follow-ups.
 - The FIRST re-raise after a written decline/refutation goes under **Disputed** for the user;
   a re-raise the reviewer labels nit is agreement, not a dispute. Keep disputed ids open and
   separate from other NEW_R findings. Fix those other findings first if budget allows, then stop
@@ -175,7 +176,7 @@ asks. Record the reason and evidence; never extend again. Budget exhaustion is n
 
 | Condition | Action |
 |---|---|
-| disputed ids remain | if `NEW_R > 0` and `R < LIMIT`, Step D fixes only the other new actionable ids, then stop **NO-PROGRESS** for the user; otherwise stop and list all open items |
+| disputed ids remain | if `NEW_R > 0` and `R < LIMIT`, Step D fixes only the other new actionable ids, then stop **NO-PROGRESS** for the user; otherwise exit **NO-PROGRESS** and list all open items. Flag fixes made on this path as unreviewed in the Report |
 | `T_R == 0` AND no open actionable ids | run the conditional backstop if fixes were applied and it is not done for this HEAD; merge its findings into this round and re-check via Step B/C once. With zero actionable findings and no open ids after backstop (or skip), **Final verify**, then **CLEAN**; nits stay follow-ups |
 | open actionable ids remain AND `NEW_R == 0` | exit **NO-PROGRESS**; do NOT fix repeats |
 | `R == LIMIT` AND `NEW_R > 0` | exit **CAP**; report all open residuals, do NOT fix (it would be unreviewed) |
